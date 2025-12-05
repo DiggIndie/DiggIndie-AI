@@ -1,0 +1,12 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# OpenAI
+openai>=1.40.0
+
+# PostgreSQL
+psycopg2-binary>=2.9.9
+
+# 설정/유틸
+python-dotenv>=1.0.1
+pydantic>=2.8.0
