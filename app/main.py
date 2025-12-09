@@ -2,6 +2,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.embedding_routes import router as embedding_router
+from app.api.band_routes import router as band_router
 
 from app.schemas.schemas import RecommendBandRequest, RecommendBandResponse, BandItem
 from app.services.services import recommend_bands, EMBEDDING_MODEL
@@ -13,6 +14,7 @@ app = FastAPI(
 )
 
 app.include_router(embedding_router, prefix="/api")
+app.include_router(band_router, prefix="/api")
 
 # TODO:
 # - 배포 환경에 맞게 allow_origins 수정
