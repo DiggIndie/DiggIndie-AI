@@ -1,15 +1,18 @@
 # app/main.py
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from app.api.embedding_routes import router as embedding_router
 
-from app.schemas import RecommendBandRequest, RecommendBandResponse, BandItem
-from app.services import recommend_bands, EMBEDDING_MODEL
+from app.schemas.schemas import RecommendBandRequest, RecommendBandResponse, BandItem
+from app.services.services import recommend_bands, EMBEDDING_MODEL
 
 app = FastAPI(
     title="Band Recommender AI Service",
     description="사용자 음악 취향 텍스트 기반 밴드 추천 API",
     version="0.1.0",
 )
+
+app.include_router(embedding_router, prefix="/api")
 
 # TODO:
 # - 배포 환경에 맞게 allow_origins 수정
@@ -20,7 +23,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 @app.get("/health")
 def health_check():
