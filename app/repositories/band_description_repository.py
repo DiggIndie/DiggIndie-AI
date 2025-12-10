@@ -1,4 +1,3 @@
-# app/repositories/band_description_repository.py
 from sqlalchemy.orm import Session
 
 from app.models.band_description import BandDescription

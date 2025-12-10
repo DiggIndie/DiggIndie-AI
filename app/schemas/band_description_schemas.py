@@ -1,4 +1,3 @@
-# app/schemas/band_description.py
 from datetime import datetime
 from typing import List, Optional
 

@@ -1,4 +1,3 @@
-# app/services/band_description_service.py
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -14,7 +13,6 @@ def fetch_band_description(db: Session, band_id: int) -> Optional[BandDescriptio
 
     embedding_list = None
     if row.embedding is not None:
-        # pgvector가 list 또는 numpy array를 반환할 수 있으므로 리스트로 변환
         embedding_list = list(row.embedding)
 
     return BandDescriptionResponse(
