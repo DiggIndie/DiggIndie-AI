@@ -4,8 +4,10 @@ uvicorn[standard]>=0.30.0
 # OpenAI
 openai>=1.40.0
 
-# PostgreSQL
+# Database
+sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.9
+pgvector>=0.2.5
 
 # 설정/유틸
 python-dotenv>=1.0.1
