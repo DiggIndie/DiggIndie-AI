@@ -24,6 +24,12 @@ class RecommendationRequestV2(BaseModel):
     keywords: List[int] = Field(default_factory=list, description="사용자가 선택한 키워드 ID 목록")
 
 
+class RecommendationRequestV3(BaseModel):
+    """V3 추천 요청 스키마 (클러스터별 키워드 반영, 밴드 3개 이상 필요)"""
+    bandIds: List[int] = Field(..., min_length=1, description="사용자가 선택한 밴드 ID 목록")
+    keywords: List[int] = Field(default_factory=list, description="사용자가 선택한 키워드 ID 목록")
+
+
 class RecommendedBand(BaseModel):
     bandId: int
     score: float = Field(..., description="코사인 유사도 점수")

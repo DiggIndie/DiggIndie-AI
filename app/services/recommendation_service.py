@@ -106,12 +106,12 @@ def slerp(v0: np.ndarray, v1: np.ndarray, t: float) -> np.ndarray:
     rotation_angle = theta_degrees * t
     logger.info(f"  실제 회전 각도: {rotation_angle:.2f}° (θ × t)")
     
-    # 결과 벡터와 원본들 간의 유사도
+    # 회전 후 벡터와 원본들 간의 유사도
     result_v0_sim = np.dot(result, v0_norm)
     result_v1_sim = np.dot(result, v1_norm)
-    logger.info(f"  결과↔사용자벡터 유사도: {result_v0_sim:.4f}")
-    logger.info(f"  결과↔키워드벡터 유사도: {result_v1_sim:.4f}")
-    logger.info(f"  결과 벡터 norm: {np.linalg.norm(result):.4f}")
+    logger.info(f"  [회전 후 벡터] ↔ [원본 사용자 벡터] 유사도: {result_v0_sim:.4f}")
+    logger.info(f"  [회전 후 벡터] ↔ [키워드 벡터] 유사도: {result_v1_sim:.4f}")
+    logger.info(f"  회전 후 벡터 norm: {np.linalg.norm(result):.4f}")
     logger.info("-" * 50)
     
     return result
@@ -425,9 +425,9 @@ def recommend_bands_v2(
                 user_embedding / np.linalg.norm(user_embedding)
             )
             
-            logger.info(f"  변화 전 벡터 norm: {user_vec_norm_before:.4f}")
-            logger.info(f"  변화 후 벡터 norm: {np.linalg.norm(user_embedding):.4f}")
-            logger.info(f"  변화 전↔후 유사도: {before_after_similarity:.4f}")
+            logger.info(f"  원본 사용자 벡터 norm: {user_vec_norm_before:.4f}")
+            logger.info(f"  회전 후 벡터 norm: {np.linalg.norm(user_embedding):.4f}")
+            logger.info(f"  [원본 사용자 벡터] ↔ [회전 후 벡터] 유사도: {before_after_similarity:.4f}")
             logger.info(f"  키워드 기여도 (t): {t:.3f} ({t*100:.1f}%)")
             logger.info(f"  ✅ 키워드 반영 완료!")
         else:
@@ -476,5 +476,193 @@ def recommend_bands_v2(
         })
     
     logger.info(f"[V2 최종 결과] 밴드 상세 정보 포함 {len(results)}개 반환")
+    
+    return results
+
+
+def recommend_bands_v3(
+    db: Session,
+    band_ids: List[int],
+    keyword_ids: List[int],
+    exclude_input: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    [V3] 클러스터별 키워드 반영 추천.
+    
+    각 클러스터의 centroid에 키워드 벡터를 Slerp로 적용하여
+    3개의 조정된 중심 벡터를 만들고, 각각에 가장 가까운 밴드 1개씩 반환.
+    
+    밴드가 3개 미만이면 V2로 폴백.
+    
+    Args:
+        db: DB 세션
+        band_ids: 사용자가 선택한 밴드 ID 리스트
+        keyword_ids: 사용자가 선택한 키워드 ID 리스트
+        exclude_input: 입력한 밴드를 추천 결과에서 제외할지 여부
+    
+    Returns:
+        [{"band_id": int, "score": float, ...}, ...]
+    """
+    logger.info("=" * 70)
+    logger.info("🎸🏷️🎯 [V3] 클러스터별 키워드 반영 추천 시작")
+    logger.info("=" * 70)
+    logger.info("[V3 입력]")
+    logger.info(f"  밴드 IDs: {band_ids}")
+    logger.info(f"  밴드 개수: {len(band_ids)}개")
+    logger.info(f"  키워드 IDs: {keyword_ids}")
+    logger.info(f"  키워드 개수: {len(keyword_ids)}개")
+    
+    unique_band_ids = list(dict.fromkeys(band_ids))
+    
+    # 밴드가 3개 미만이면 V2로 폴백
+    if len(unique_band_ids) < 3:
+        logger.info(f"  ⚠️ 밴드 {len(unique_band_ids)}개 < 3개 → V2로 폴백")
+        logger.info("=" * 70)
+        return recommend_bands_v2(
+            db=db,
+            band_ids=band_ids,
+            keyword_ids=keyword_ids,
+            top_k=3,
+            exclude_input=exclude_input,
+        )
+    
+    # 1. 사용자가 선택한 밴드들의 임베딩 가져오기
+    logger.info("-" * 50)
+    logger.info("[V3 Step 1] 밴드 임베딩 조회")
+    selected_bands = get_band_descriptions_by_ids(db, unique_band_ids)
+    
+    if not selected_bands:
+        raise ValueError("선택한 밴드 중 임베딩이 있는 밴드가 없습니다.")
+    
+    if len(selected_bands) < 3:
+        logger.info(f"  ⚠️ 임베딩 있는 밴드 {len(selected_bands)}개 < 3개 → V2로 폴백")
+        return recommend_bands_v2(
+            db=db,
+            band_ids=band_ids,
+            keyword_ids=keyword_ids,
+            top_k=3,
+            exclude_input=exclude_input,
+        )
+    
+    logger.info(f"  조회된 밴드: {len(selected_bands)}개")
+    for band in selected_bands:
+        emb_norm = np.linalg.norm(np.array(band.embedding)) if band.embedding is not None else 0
+        logger.info(f"    - band_id={band.band_id}, 임베딩 norm={emb_norm:.4f}")
+    
+    selected_embeddings = [np.array(b.embedding) for b in selected_bands]
+    selected_band_ids = {b.band_id for b in selected_bands}
+    
+    # 2. K-means 클러스터링 (k=3)
+    logger.info("-" * 50)
+    logger.info("[V3 Step 2] K-means 클러스터링 (k=3)")
+    
+    X = np.array(selected_embeddings)
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(X)
+    centroids = kmeans.cluster_centers_  # shape: (3, dim)
+    cluster_counts = np.bincount(labels, minlength=3)
+    
+    logger.info("[클러스터링 결과]")
+    for i in range(3):
+        logger.info(f"  클러스터 {i}: {cluster_counts[i]}개 벡터, centroid norm={np.linalg.norm(centroids[i]):.4f}")
+    
+    # 3. 키워드 임베딩 생성
+    logger.info("-" * 50)
+    logger.info("[V3 Step 3] 키워드 임베딩 생성")
+    
+    keyword_embedding = None
+    if keyword_ids:
+        keywords = get_keywords_by_ids(db, keyword_ids)
+        if keywords:
+            logger.info(f"  조회된 키워드: {keywords}")
+            keyword_embedding = embed_keywords(keywords)
+        else:
+            logger.info("  ⚠️ 유효한 키워드 없음")
+    else:
+        logger.info("  ⚠️ 키워드 없음")
+    
+    # 4. 각 centroid에 Slerp 적용
+    logger.info("-" * 50)
+    logger.info("[V3 Step 4] 각 클러스터 centroid에 키워드 Slerp 적용")
+    
+    adjusted_centroids = []
+    for i in range(3):
+        centroid = centroids[i]
+        
+        if keyword_embedding is not None and cluster_counts[i] > 0:
+            # 유사도 기반 t 계산
+            t = adaptive_t(centroid, keyword_embedding)
+            logger.info(f"  클러스터 {i}: t={t:.3f}")
+            
+            # Slerp로 키워드 방향 반영
+            adjusted = slerp(centroid, keyword_embedding, t)
+            adjusted_centroids.append(adjusted)
+            
+            logger.info(f"    [원본 centroid] ↔ [회전 후 centroid] 유사도: {np.dot(centroid/np.linalg.norm(centroid), adjusted):.4f}")
+        else:
+            # 키워드 없으면 원본 centroid 사용 (정규화)
+            adjusted_centroids.append(centroid / np.linalg.norm(centroid))
+            logger.info(f"  클러스터 {i}: 키워드 없음 → 원본 centroid 사용")
+    
+    # 5. 각 조정된 centroid에 가장 가까운 밴드 1개씩 검색
+    logger.info("-" * 50)
+    logger.info("[V3 Step 5] 각 클러스터별 가장 유사한 밴드 검색")
+    
+    exclude_ids = selected_band_ids if exclude_input else set()
+    all_recommended = []  # (band_id, score, cluster_idx)
+    already_recommended = set()  # 중복 방지
+    
+    for i, adj_centroid in enumerate(adjusted_centroids):
+        # 빈 클러스터는 스킵
+        if cluster_counts[i] == 0:
+            logger.info(f"  클러스터 {i}: 비어있음 → 스킵")
+            continue
+        
+        # 해당 centroid로 가장 유사한 밴드 검색 (top_k를 넉넉히 가져와서 중복 체크)
+        results = find_similar_bands_by_embedding(
+            db=db,
+            user_embedding=adj_centroid.tolist(),
+            top_k=10,  # 넉넉히 가져옴
+            exclude_band_ids=exclude_ids,
+        )
+        
+        # 아직 추천되지 않은 첫 번째 밴드 선택
+        for band_id, score in results:
+            if band_id not in already_recommended:
+                all_recommended.append((band_id, score, i))
+                already_recommended.add(band_id)
+                logger.info(f"  클러스터 {i}: band_id={band_id}, score={score:.4f}")
+                break
+        else:
+            logger.info(f"  클러스터 {i}: 추천할 밴드 없음")
+    
+    # 6. 결과 정리 (점수 순으로 정렬)
+    all_recommended.sort(key=lambda x: x[1], reverse=True)
+    
+    logger.info("-" * 50)
+    logger.info("[V3 추천 결과]")
+    for i, (band_id, score, cluster_idx) in enumerate(all_recommended, 1):
+        logger.info(f"  {i}. band_id={band_id}, score={score:.4f} (클러스터 {cluster_idx})")
+    
+    # 7. 밴드 상세 정보 조회
+    recommended_band_ids = [band_id for band_id, _, _ in all_recommended]
+    bands_info = get_bands_with_keywords_by_ids(db, recommended_band_ids)
+    
+    # 8. 결과 조합
+    results = []
+    for band_id, score, _ in all_recommended:
+        band_info = bands_info.get(band_id, {})
+        results.append({
+            "band_id": band_id,
+            "score": score,
+            "band_name": band_info.get("band_name"),
+            "image_url": band_info.get("main_image"),
+            "band_music": band_info.get("main_music"),
+            "keywords": band_info.get("keywords", []),
+        })
+    
+    logger.info("=" * 70)
+    logger.info(f"[V3 최종 결과] {len(results)}개 밴드 반환 (각 클러스터에서 1개씩)")
+    logger.info("=" * 70)
     
     return results
