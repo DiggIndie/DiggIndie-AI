@@ -13,13 +13,13 @@ class SingleEmbeddingResponse(BaseModel):
 
 class BatchEmbeddingResponse(BaseModel):
     mode: str  # "reset" or "update-missing" 등 동작 구분용
-    total_processed: int
+    totalProcessed: int
 
 
 class BulkIdsEmbeddingRequest(BaseModel):
-    band_description_ids: List[int]
+    bandDescriptionIds: List[int]
 
 
 class BulkIdsEmbeddingResponse(BaseModel):
-    requested_count: int
-    processed_count: int
+    requestedCount: int
+    processedCount: int

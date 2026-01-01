@@ -16,10 +16,10 @@ def fetch_band_description(db: Session, band_id: int) -> Optional[BandDescriptio
         embedding_list = list(row.embedding)
 
     return BandDescriptionResponse(
-        band_id=row.band_id,
+        bandId=row.band_id,
         description=row.description,
-        created_at=row.created_at,
-        updated_at=row.updated_at,
-        deleted_at=row.deleted_at,
+        createdAt=row.created_at,
+        updatedAt=row.updated_at,
+        deletedAt=row.deleted_at,
         embedding=embedding_list,
     )
