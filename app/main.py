@@ -7,6 +7,9 @@ from app.api.band_routes import router as band_router
 from app.schemas.schemas import RecommendBandRequest, RecommendBandResponse, BandItem
 from app.services.services import recommend_bands, EMBEDDING_MODEL
 
+# SQLAlchemy 모델들을 임포트하여 relationship이 정상 작동하도록 함
+import app.models  # noqa: F401
+
 app = FastAPI(
     title="Band Recommender AI Service",
     description="사용자 음악 취향 텍스트 기반 밴드 추천 API",

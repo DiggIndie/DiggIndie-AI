@@ -41,3 +41,36 @@ class RecommendedBand(BaseModel):
 
 class RecommendationResponse(BaseModel):
     bands: List[RecommendedBand]
+
+
+# ============================================================
+# 최종 추천 API 응답 스키마 (POST /api/bands/recommendations/update)
+# ============================================================
+
+class TopTrackResponse(BaseModel):
+    """TopTrack 응답 스키마"""
+    title: str
+    externalUrl: str
+
+
+class RecommendedBandFinal(BaseModel):
+    """최종 추천 밴드 응답 스키마 (TopTrack 포함)"""
+    bandId: int
+    score: float = Field(..., description="코사인 유사도 점수")
+    bandName: Optional[str] = None
+    imageUrl: Optional[str] = None
+    topTrack: Optional[TopTrackResponse] = None
+    keywords: List[str] = Field(default_factory=list, description="밴드 키워드 목록")
+
+
+class RecommendationPayload(BaseModel):
+    """추천 응답 payload"""
+    bands: List[RecommendedBandFinal]
+
+
+class FinalRecommendationResponse(BaseModel):
+    """최종 추천 API 응답 스키마 (Spring 응답 형식에 맞춤)"""
+    statusCode: int = 200
+    isSuccess: bool = True
+    message: str = "추천 밴드 업데이트 API"
+    payload: RecommendationPayload
