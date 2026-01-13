@@ -1,0 +1,91 @@
+name: Deploy FastAPI to EC2
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-northeast-2
+  ECR_REGISTRY: 179351860607.dkr.ecr.ap-northeast-2.amazonaws.com
+  ECR_REPOSITORY: diggindie-ai
+  IMAGE_TAG: latest
+  CONTAINER_NAME: diggindie-ai
+  DOCKER_NETWORK: app_default
+  EC2_USER: ubuntu
+  EC2_HOST: ${{ secrets.EC2_HOST }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push \
+            $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Copy Nginx config via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ${{ env.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "nginx/ai.diggindie.com.conf"
+          target: "/home/ubuntu/temp_nginx"
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ${{ env.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            ECR_REGISTRY=179351860607.dkr.ecr.ap-northeast-2.amazonaws.com
+            ECR_REPOSITORY=diggindie-ai
+            IMAGE_TAG=latest
+            CONTAINER_NAME=diggindie-ai
+            DOCKER_NETWORK=app_default
+
+            echo "1. Nginx 설정 업데이트"
+            sudo mv /home/ubuntu/temp_nginx/nginx/ai.diggindie.com.conf /etc/nginx/sites-available/ai.diggindie.com
+            
+            sudo ln -sf /etc/nginx/sites-available/ai.diggindie.com /etc/nginx/sites-enabled/
+
+            sudo nginx -t && sudo systemctl reload nginx
+
+            echo "2. ECR 로그인 및 이미지 풀"
+            aws ecr get-login-password --region ap-northeast-2 | docker login --username AWS --password-stdin $ECR_REGISTRY
+            docker pull $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+            echo "3. 기존 컨테이너 중지 및 삭제"
+            docker stop $CONTAINER_NAME || true
+            docker rm $CONTAINER_NAME || true
+
+            echo "4. 새 컨테이너 실행"
+            docker run -d \
+              --name $CONTAINER_NAME \
+              --restart always \
+              --network $DOCKER_NETWORK \
+              -p 8000:8000 \
+              -e REDIS_HOST=redis \
+              -e REDIS_PORT=6379 \
+              $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+            echo "Deployment finished"
