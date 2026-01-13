@@ -85,6 +85,14 @@ jobs:
               -p 8000:8000 \
               -e REDIS_HOST=app-redis-1 \
               -e REDIS_PORT=6379 \
+              -e OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
+              -e OPENAI_EMBEDDING_MODEL="${{ secrets.OPENAI_EMBEDDING_MODEL }}" \
+              -e DB_HOST="${{ secrets.DB_HOST }}" \
+              -e DB_PORT="${{ secrets.DB_PORT }}" \
+              -e DB_NAME="${{ secrets.DB_NAME }}" \
+              -e DB_USERNAME="${{ secrets.DB_USERNAME }}" \
+              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              -e JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
               $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
             echo "5. 배포 확인"
