@@ -11,7 +11,7 @@ from app.repositories.band_description_repository import (
     get_bands_with_keywords_by_ids,
     get_keywords_by_ids,
 )
-from app.services.embedding_service import EmbeddingService
+from app.services.embedding_service import embedding_service
 
 # 로거 설정
 logger = logging.getLogger(__name__)
@@ -40,7 +40,6 @@ def embed_keywords(keywords: List[str]) -> np.ndarray:
     logger.info(f"  키워드 목록: {keywords}")
     logger.info(f"  결합 문장: \"{keyword_sentence}\"")
     
-    embedding_service = EmbeddingService()
     model_name, embedding = embedding_service.embed_single_text(keyword_sentence)
     
     embedding_array = np.array(embedding)
