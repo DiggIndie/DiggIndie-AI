@@ -29,6 +29,29 @@ class Settings:
         return b""
     
     JWT_ALGORITHM: str = "HS256"
+    
+    # CORS 설정 (Spring Security와 동일한 기본값)
+    # 환경 변수 CORS_ORIGINS로 오버라이드 가능 (쉼표로 구분)
+    _CORS_ORIGINS_ENV: str = os.getenv("CORS_ORIGINS", "")
+    
+    # Spring Security와 동일한 기본 origins
+    DEFAULT_CORS_ORIGINS: list[str] = [
+        "https://diggindie.com",
+        "https://api.diggindie.com",
+        "https://www.diggindie.com",
+        "http://localhost:3000",
+        "http://localhost:8080",
+        "https://digg-indie-fe.vercel.app",
+    ]
+    
+    @property
+    def CORS_ORIGINS_LIST(self) -> list[str]:
+        """CORS origins를 리스트로 반환. 환경 변수가 있으면 사용, 없으면 기본값 사용"""
+        if self._CORS_ORIGINS_ENV:
+            if self._CORS_ORIGINS_ENV == "*":
+                return ["*"]
+            return [origin.strip() for origin in self._CORS_ORIGINS_ENV.split(",") if origin.strip()]
+        return self.DEFAULT_CORS_ORIGINS
 
     @property
     def DATABASE_URL(self) -> str:

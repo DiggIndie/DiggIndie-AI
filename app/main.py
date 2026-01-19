@@ -3,12 +3,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.embedding_routes import router as embedding_router
 from app.api.band_routes import router as band_router
+from app.core.config import settings
 
 from app.schemas.schemas import RecommendBandRequest, RecommendBandResponse, BandItem
 from app.services.services import recommend_bands, EMBEDDING_MODEL
 
-# SQLAlchemy 모델들을 임포트하여 relationship이 정상 작동하도록 함
-import app.models  # noqa: F401
+import app.models  
 
 app = FastAPI(
     title="Band Recommender AI Service",
@@ -19,14 +19,13 @@ app = FastAPI(
 app.include_router(embedding_router, prefix="/api")
 app.include_router(band_router, prefix="/api")
 
-# TODO:
-# - 배포 환경에 맞게 allow_origins 수정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: 나중에 특정 도메인으로 제한
+    allow_origins=settings.CORS_ORIGINS_LIST,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
+    max_age=3600,  
 )
 
 @app.get("/health")
@@ -53,22 +52,3 @@ def recommend_band(payload: RecommendBandRequest):
     지금은 501 Not Implemented를 던지도록 해둠.
     """
     raise HTTPException(status_code=501, detail="Band recommendation not implemented yet.")
-
-    # 구현 예시 (나중에 주석 해제해서 사용)
-    # rows = recommend_bands(payload.user_text, top_k=payload.top_k)
-    #
-    # bands = [
-    #     BandItem(
-    #         id=row[0],
-    #         name=row[1],
-    #         genre_desc=row[2],
-    #         distance=float(row[3]),
-    #     )
-    #     for row in rows
-    # ]
-    #
-    # return RecommendBandResponse(
-    #     model=EMBEDDING_MODEL,
-    #     query_text=payload.user_text,
-    #     bands=bands,
-    # )
