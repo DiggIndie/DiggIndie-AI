@@ -486,10 +486,14 @@ def recommend_bands_v3(
     exclude_input: bool = True,
 ) -> List[Dict[str, Any]]:
     """
-    [V3] 클러스터별 키워드 반영 추천.
+    [V3] 클러스터별 키워드 반영 추천 (5개 반환).
     
     각 클러스터의 centroid에 키워드 벡터를 Slerp로 적용하여
-    3개의 조정된 중심 벡터를 만들고, 각각에 가장 가까운 밴드 1개씩 반환.
+    3개의 조정된 중심 벡터를 만들고, 각각에 가장 가까운 밴드 2개씩 검색.
+    
+    - 각 클러스터의 1등 3개: 필수 반환
+    - 각 클러스터의 2등 중 점수 높은 2개: 추가 반환
+    - 총 5개 밴드 반환
     
     밴드가 3개 미만이면 V2로 폴백.
     
@@ -603,12 +607,13 @@ def recommend_bands_v3(
             adjusted_centroids.append(centroid / np.linalg.norm(centroid))
             logger.info(f"  클러스터 {i}: 키워드 없음 → 원본 centroid 사용")
     
-    # 5. 각 조정된 centroid에 가장 가까운 밴드 1개씩 검색
+    # 5. 각 조정된 centroid에 가장 가까운 밴드 2개씩 검색
     logger.info("-" * 50)
-    logger.info("[V3 Step 5] 각 클러스터별 가장 유사한 밴드 검색")
+    logger.info("[V3 Step 5] 각 클러스터별 상위 2개 밴드 검색")
     
     exclude_ids = selected_band_ids if exclude_input else set()
-    all_recommended = []  # (band_id, score, cluster_idx)
+    cluster_top1 = []  # 각 클러스터의 1등 (band_id, score, cluster_idx)
+    cluster_top2 = []  # 각 클러스터의 2등 (band_id, score, cluster_idx)
     already_recommended = set()  # 중복 방지
     
     for i, adj_centroid in enumerate(adjusted_centroids):
@@ -625,31 +630,61 @@ def recommend_bands_v3(
             exclude_band_ids=exclude_ids,
         )
         
-        # 아직 추천되지 않은 첫 번째 밴드 선택
+        # 각 클러스터에서 2개씩 뽑기
+        cluster_bands = []
         for band_id, score in results:
             if band_id not in already_recommended:
-                all_recommended.append((band_id, score, i))
+                cluster_bands.append((band_id, score, i))
                 already_recommended.add(band_id)
-                logger.info(f"  클러스터 {i}: band_id={band_id}, score={score:.4f}")
-                break
-        else:
+                if len(cluster_bands) == 2:
+                    break
+        
+        # 1등과 2등 분리
+        if len(cluster_bands) >= 1:
+            cluster_top1.append(cluster_bands[0])
+            logger.info(f"  클러스터 {i} - 1등: band_id={cluster_bands[0][0]}, score={cluster_bands[0][1]:.4f}")
+        
+        if len(cluster_bands) >= 2:
+            cluster_top2.append(cluster_bands[1])
+            logger.info(f"  클러스터 {i} - 2등: band_id={cluster_bands[1][0]}, score={cluster_bands[1][1]:.4f}")
+        
+        if len(cluster_bands) == 0:
             logger.info(f"  클러스터 {i}: 추천할 밴드 없음")
+        elif len(cluster_bands) == 1:
+            logger.info(f"  클러스터 {i}: 2등 밴드 없음 (1개만 발견)")
     
-    # 6. 결과 정리 (점수 순으로 정렬)
-    all_recommended.sort(key=lambda x: x[1], reverse=True)
+    # 6. 최종 추천 목록 구성
+    logger.info("-" * 50)
+    logger.info("[V3 Step 6] 최종 추천 목록 구성")
+    
+    # 각 클러스터 1등 3개는 필수 포함
+    final_recommended = cluster_top1.copy()
+    logger.info(f"  필수 포함 (각 클러스터 1등): {len(cluster_top1)}개")
+    
+    # 각 클러스터 2등 중 점수 높은 순으로 정렬하여 상위 2개 추가
+    cluster_top2_sorted = sorted(cluster_top2, key=lambda x: x[1], reverse=True)
+    additional_bands = cluster_top2_sorted[:2]
+    final_recommended.extend(additional_bands)
+    
+    logger.info(f"  추가 포함 (2등 중 상위): {len(additional_bands)}개")
+    for band_id, score, cluster_idx in additional_bands:
+        logger.info(f"    클러스터 {cluster_idx} - band_id={band_id}, score={score:.4f}")
+    
+    # 7. 최종 점수 순으로 정렬
+    final_recommended.sort(key=lambda x: x[1], reverse=True)
     
     logger.info("-" * 50)
-    logger.info("[V3 추천 결과]")
-    for i, (band_id, score, cluster_idx) in enumerate(all_recommended, 1):
+    logger.info("[V3 추천 결과] 총 5개 밴드")
+    for i, (band_id, score, cluster_idx) in enumerate(final_recommended, 1):
         logger.info(f"  {i}. band_id={band_id}, score={score:.4f} (클러스터 {cluster_idx})")
     
-    # 7. 밴드 상세 정보 조회
-    recommended_band_ids = [band_id for band_id, _, _ in all_recommended]
+    # 8. 밴드 상세 정보 조회
+    recommended_band_ids = [band_id for band_id, _, _ in final_recommended]
     bands_info = get_bands_with_keywords_by_ids(db, recommended_band_ids)
     
-    # 8. 결과 조합
+    # 9. 결과 조합
     results = []
-    for band_id, score, _ in all_recommended:
+    for band_id, score, cluster_idx in final_recommended:
         band_info = bands_info.get(band_id, {})
         results.append({
             "band_id": band_id,
@@ -661,7 +696,9 @@ def recommend_bands_v3(
         })
     
     logger.info("=" * 70)
-    logger.info(f"[V3 최종 결과] {len(results)}개 밴드 반환 (각 클러스터에서 1개씩)")
+    logger.info(f"[V3 최종 결과] {len(results)}개 밴드 반환")
+    logger.info(f"  - 각 클러스터 1등: 3개 (필수)")
+    logger.info(f"  - 각 클러스터 2등 중 상위: 2개 (추가)")
     logger.info("=" * 70)
     
     return results

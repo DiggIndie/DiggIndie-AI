@@ -68,6 +68,8 @@ POST /api/bands/recommendations/update
 
 **인증**: JWT Bearer Token 필요 (Authorization 헤더)
 
+**반환**: 5개의 추천 밴드
+
 ### 동작 방식
 
 최종 추천 API는 **V3 알고리즘**을 사용하여 사용자의 선호 밴드와 키워드를 기반으로 추천을 생성합니다.
@@ -81,7 +83,7 @@ POST /api/bands/recommendations/update
    ↓
 3. MemberBand, MemberKeyword 조회 → bandIds, keywordIds 수집
    ↓
-4. V3 추천 알고리즘 실행
+4. V3 추천 알고리즘 실행 (5개 반환)
    ↓
 5. BandRecommend 테이블에 저장 (기존 데이터 삭제 후 새로 저장)
    ↓
@@ -110,21 +112,24 @@ POST /api/bands/recommendations/update
   - 유사도 높음 → 적게 틀기 (t 작음)
   - 유사도 낮음 → 많이 틀기 (t 큼)
 
-**Step 5: 각 클러스터별 가장 유사한 밴드 검색**
-- 조정된 각 centroid에서 **pgvector**를 활용하여 코사인 유사도가 가장 높은 밴드 1개씩 선택
-- 총 **3개의 다양한 취향 그룹**에서 각각 1개씩 추천
+**Step 5: 각 클러스터별 상위 2개 밴드 검색**
+- 조정된 각 centroid에서 **pgvector**를 활용하여 코사인 유사도가 높은 밴드 2개씩 검색
+- 각 클러스터의 **1등 3개는 필수 포함** (다양성 확보)
+- 각 클러스터의 **2등 3개 중 점수 높은 2개 추가** (품질 확보)
+- 총 **5개 밴드 반환** (3 + 2)
 
 **Step 6: 결과 저장 및 반환**
-- 추천된 3개 밴드를 `band_recommend` 테이블에 저장
-- `score` 높은 순으로 `priority` 1, 2, 3 부여
+- 추천된 5개 밴드를 `band_recommend` 테이블에 저장
+- `score` 높은 순으로 `priority` 1, 2, 3, 4, 5 부여
 - Band, TopTrack, Keyword 정보와 함께 반환
 
 ### 알고리즘 특징
 
-1. **다양성 확보**: 각 클러스터에서 1개씩 선택하여 서로 다른 취향 그룹 반영
-2. **키워드 반영**: 모든 클러스터에 키워드 방향을 개별적으로 적용
-3. **벡터 기반 유사도**: pgvector의 코사인 거리 연산자(`<=>`) 활용
-4. **안정성**: 밴드가 3개 미만이면 자동으로 V2로 폴백
+1. **다양성 확보**: 각 클러스터에서 1등씩 필수 포함 → 서로 다른 취향 그룹 반영
+2. **품질 보장**: 2등 중 상위 2개 추가 → 높은 유사도의 추천 제공
+3. **키워드 반영**: 모든 클러스터에 키워드 방향을 개별적으로 적용
+4. **벡터 기반 유사도**: pgvector의 코사인 거리 연산자(`<=>`) 활용
+5. **안정성**: 밴드가 3개 미만이면 자동으로 V2로 폴백
 
 ### 폴백 조건
 
@@ -197,9 +202,9 @@ DiggIndie-AI/
 
 ### 2. 추천 알고리즘 버전
 
-- **V1**: 밴드 임베딩 평균 기반 (키워드 미사용)
-- **V2**: 밴드 + 키워드 Slerp 결합
-- **V3**: 클러스터별 키워드 반영 (다양성 확보) ⭐ **최종 API에서 사용**
+- **V1**: 밴드 임베딩 평균 기반 (키워드 미사용, 3개 반환)
+- **V2**: 밴드 + 키워드 Slerp 결합 (3개 반환)
+- **V3**: 클러스터별 키워드 반영 (다양성 + 품질 확보, **5개 반환**) ⭐ **최종 API에서 사용**
 
 ### 3. 임베딩 관리
 
@@ -246,6 +251,28 @@ DiggIndie-AI/
         "imageUrl": "https://...",
         "topTrack": null,
         "keywords": ["감성", "서정"]
+      },
+      {
+        "bandId": 754,
+        "score": 0.6024,
+        "bandName": "혁오",
+        "imageUrl": "https://...",
+        "topTrack": {
+          "title": "Wi-ing Wi-ing",
+          "externalUrl": "https://spotify/..."
+        },
+        "keywords": ["몽환", "독특한"]
+      },
+      {
+        "bandId": 523,
+        "score": 0.5887,
+        "bandName": "검정치마",
+        "imageUrl": "https://...",
+        "topTrack": {
+          "title": "EVERYTHING",
+          "externalUrl": "https://spotify/..."
+        },
+        "keywords": ["감성", "잔잔한"]
       }
     ]
   }

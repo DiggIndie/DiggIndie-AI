@@ -127,13 +127,13 @@ async def update_recommendations_v3(
     db: Session = Depends(get_db),
 ):
     """
-    [V3] 클러스터별 키워드 반영 추천.
+    [V3] 클러스터별 키워드 반영 추천 (5개 반환).
     
     알고리즘:
     - K-means 클러스터링(k=3)으로 3개의 centroid 생성
     - 각 centroid에 키워드 벡터를 Slerp로 적용
-    - 조정된 각 centroid에서 가장 유사한 밴드 1개씩 선택
-    - 총 3개의 다양한 밴드 반환
+    - 조정된 각 centroid에서 가장 유사한 밴드 2개씩 검색
+    - 각 클러스터 1등 3개 + 2등 중 상위 2개 = 총 5개 반환
     
     ※ 밴드가 3개 미만이면 V2로 폴백
     """
@@ -187,13 +187,14 @@ async def update_recommendations_final(
     db: Session = Depends(get_db),
 ):
     """
-    [최종 추천 API] JWT 인증 기반 추천 밴드 업데이트 및 반환.
+    [최종 추천 API] JWT 인증 기반 추천 밴드 업데이트 및 반환 (5개).
     
     흐름:
     1. JWT에서 externalId 추출
     2. Member 조회 -> memberId
     3. MemberBand, MemberKeyword 조회 -> bandIds, keywordIds
     4. recommend_bands_v3 호출 (밴드 3개 미만 시 V2 폴백)
+       - 각 클러스터 1등 3개 + 2등 중 상위 2개 = 총 5개
     5. BandRecommend 테이블에 저장 (기존 삭제 후 새로 저장)
     6. Band + TopTrack + Keyword 정보와 함께 반환
     """
