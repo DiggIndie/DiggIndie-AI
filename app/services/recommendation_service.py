@@ -702,3 +702,234 @@ def recommend_bands_v3(
     logger.info("=" * 70)
     
     return results
+
+
+def recommend_bands_v4(
+    db: Session,
+    band_ids: List[int],
+    keyword_ids: List[int],
+    exclude_input: bool = True,
+) -> List[Dict[str, Any]]:
+    """
+    [V4] 클러스터별 키워드 반영 + is_band 필터링 추천 (5개 반환).
+    
+    V3와 동일한 로직이지만, 추천 대상을 is_band=true인 밴드로 제한.
+    입력된 band_ids는 is_band 값과 무관하게 클러스터링에 사용됨.
+    
+    각 클러스터의 centroid에 키워드 벡터를 Slerp로 적용하여
+    3개의 조정된 중심 벡터를 만들고, 각각에 가장 가까운 밴드 2개씩 검색.
+    
+    - 각 클러스터의 1등 3개: 필수 반환
+    - 각 클러스터의 2등 중 점수 높은 2개: 추가 반환
+    - 총 5개 밴드 반환
+    
+    밴드가 3개 미만이면 V2로 폴백 (V2는 is_band 필터 없음).
+    
+    Args:
+        db: DB 세션
+        band_ids: 사용자가 선택한 밴드 ID 리스트 (is_band 무관)
+        keyword_ids: 사용자가 선택한 키워드 ID 리스트
+        exclude_input: 입력한 밴드를 추천 결과에서 제외할지 여부
+    
+    Returns:
+        [{"band_id": int, "score": float, ...}, ...]
+    """
+    logger.info("=" * 70)
+    logger.info("🎸🏷️🎯🔍 [V4] 클러스터별 키워드 반영 + is_band 필터링 추천 시작")
+    logger.info("=" * 70)
+    logger.info("[V4 입력]")
+    logger.info(f"  밴드 IDs: {band_ids}")
+    logger.info(f"  밴드 개수: {len(band_ids)}개")
+    logger.info(f"  키워드 IDs: {keyword_ids}")
+    logger.info(f"  키워드 개수: {len(keyword_ids)}개")
+    logger.info(f"  필터링: is_band=true 밴드만 추천")
+    
+    unique_band_ids = list(dict.fromkeys(band_ids))
+    
+    # 밴드가 3개 미만이면 V2로 폴백
+    if len(unique_band_ids) < 3:
+        logger.info(f"  ⚠️ 밴드 {len(unique_band_ids)}개 < 3개 → V2로 폴백 (is_band 필터 없음)")
+        logger.info("=" * 70)
+        return recommend_bands_v2(
+            db=db,
+            band_ids=band_ids,
+            keyword_ids=keyword_ids,
+            top_k=3,
+            exclude_input=exclude_input,
+        )
+    
+    # 1. 사용자가 선택한 밴드들의 임베딩 가져오기
+    logger.info("-" * 50)
+    logger.info("[V4 Step 1] 밴드 임베딩 조회")
+    selected_bands = get_band_descriptions_by_ids(db, unique_band_ids)
+    
+    if not selected_bands:
+        raise ValueError("선택한 밴드 중 임베딩이 있는 밴드가 없습니다.")
+    
+    if len(selected_bands) < 3:
+        logger.info(f"  ⚠️ 임베딩 있는 밴드 {len(selected_bands)}개 < 3개 → V2로 폴백 (is_band 필터 없음)")
+        return recommend_bands_v2(
+            db=db,
+            band_ids=band_ids,
+            keyword_ids=keyword_ids,
+            top_k=3,
+            exclude_input=exclude_input,
+        )
+    
+    logger.info(f"  조회된 밴드: {len(selected_bands)}개")
+    for band in selected_bands:
+        emb_norm = np.linalg.norm(np.array(band.embedding)) if band.embedding is not None else 0
+        logger.info(f"    - band_id={band.band_id}, 임베딩 norm={emb_norm:.4f}")
+    
+    selected_embeddings = [np.array(b.embedding) for b in selected_bands]
+    selected_band_ids = {b.band_id for b in selected_bands}
+    
+    # 2. K-means 클러스터링 (k=3)
+    logger.info("-" * 50)
+    logger.info("[V4 Step 2] K-means 클러스터링 (k=3)")
+    
+    X = np.array(selected_embeddings)
+    kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(X)
+    centroids = kmeans.cluster_centers_  # shape: (3, dim)
+    cluster_counts = np.bincount(labels, minlength=3)
+    
+    logger.info("[클러스터링 결과]")
+    for i in range(3):
+        logger.info(f"  클러스터 {i}: {cluster_counts[i]}개 벡터, centroid norm={np.linalg.norm(centroids[i]):.4f}")
+    
+    # 3. 키워드 임베딩 생성
+    logger.info("-" * 50)
+    logger.info("[V4 Step 3] 키워드 임베딩 생성")
+    
+    keyword_embedding = None
+    if keyword_ids:
+        keywords = get_keywords_by_ids(db, keyword_ids)
+        if keywords:
+            logger.info(f"  조회된 키워드: {keywords}")
+            keyword_embedding = embed_keywords(keywords)
+        else:
+            logger.info("  ⚠️ 유효한 키워드 없음")
+    else:
+        logger.info("  ⚠️ 키워드 없음")
+    
+    # 4. 각 centroid에 Slerp 적용
+    logger.info("-" * 50)
+    logger.info("[V4 Step 4] 각 클러스터 centroid에 키워드 Slerp 적용")
+    
+    adjusted_centroids = []
+    for i in range(3):
+        centroid = centroids[i]
+        
+        if keyword_embedding is not None and cluster_counts[i] > 0:
+            # 유사도 기반 t 계산
+            t = adaptive_t(centroid, keyword_embedding)
+            logger.info(f"  클러스터 {i}: t={t:.3f}")
+            
+            # Slerp로 키워드 방향 반영
+            adjusted = slerp(centroid, keyword_embedding, t)
+            adjusted_centroids.append(adjusted)
+            
+            logger.info(f"    [원본 centroid] ↔ [회전 후 centroid] 유사도: {np.dot(centroid/np.linalg.norm(centroid), adjusted):.4f}")
+        else:
+            # 키워드 없으면 원본 centroid 사용 (정규화)
+            adjusted_centroids.append(centroid / np.linalg.norm(centroid))
+            logger.info(f"  클러스터 {i}: 키워드 없음 → 원본 centroid 사용")
+    
+    # 5. 각 조정된 centroid에 가장 가까운 is_band=true 밴드 2개씩 검색
+    logger.info("-" * 50)
+    logger.info("[V4 Step 5] 각 클러스터별 상위 2개 밴드 검색 (is_band=true만)")
+    
+    exclude_ids = selected_band_ids if exclude_input else set()
+    cluster_top1 = []  # 각 클러스터의 1등 (band_id, score, cluster_idx)
+    cluster_top2 = []  # 각 클러스터의 2등 (band_id, score, cluster_idx)
+    already_recommended = set()  # 중복 방지
+    
+    for i, adj_centroid in enumerate(adjusted_centroids):
+        # 빈 클러스터는 스킵
+        if cluster_counts[i] == 0:
+            logger.info(f"  클러스터 {i}: 비어있음 → 스킵")
+            continue
+        
+        # 해당 centroid로 가장 유사한 밴드 검색 (only_bands=True)
+        results = find_similar_bands_by_embedding(
+            db=db,
+            user_embedding=adj_centroid.tolist(),
+            top_k=10,  # 넉넉히 가져옴
+            exclude_band_ids=exclude_ids,
+            only_bands=True,  # V4의 핵심: is_band=true만 검색
+        )
+        
+        # 각 클러스터에서 2개씩 뽑기
+        cluster_bands = []
+        for band_id, score in results:
+            if band_id not in already_recommended:
+                cluster_bands.append((band_id, score, i))
+                already_recommended.add(band_id)
+                if len(cluster_bands) == 2:
+                    break
+        
+        # 1등과 2등 분리
+        if len(cluster_bands) >= 1:
+            cluster_top1.append(cluster_bands[0])
+            logger.info(f"  클러스터 {i} - 1등: band_id={cluster_bands[0][0]}, score={cluster_bands[0][1]:.4f}")
+        
+        if len(cluster_bands) >= 2:
+            cluster_top2.append(cluster_bands[1])
+            logger.info(f"  클러스터 {i} - 2등: band_id={cluster_bands[1][0]}, score={cluster_bands[1][1]:.4f}")
+        
+        if len(cluster_bands) == 0:
+            logger.info(f"  클러스터 {i}: 추천할 밴드 없음 (is_band=true 조건)")
+        elif len(cluster_bands) == 1:
+            logger.info(f"  클러스터 {i}: 2등 밴드 없음 (1개만 발견)")
+    
+    # 6. 최종 추천 목록 구성
+    logger.info("-" * 50)
+    logger.info("[V4 Step 6] 최종 추천 목록 구성")
+    
+    # 각 클러스터 1등 3개는 필수 포함
+    final_recommended = cluster_top1.copy()
+    logger.info(f"  필수 포함 (각 클러스터 1등): {len(cluster_top1)}개")
+    
+    # 각 클러스터 2등 중 점수 높은 순으로 정렬하여 상위 2개 추가
+    cluster_top2_sorted = sorted(cluster_top2, key=lambda x: x[1], reverse=True)
+    additional_bands = cluster_top2_sorted[:2]
+    final_recommended.extend(additional_bands)
+    
+    logger.info(f"  추가 포함 (2등 중 상위): {len(additional_bands)}개")
+    for band_id, score, cluster_idx in additional_bands:
+        logger.info(f"    클러스터 {cluster_idx} - band_id={band_id}, score={score:.4f}")
+    
+    # 7. 최종 점수 순으로 정렬
+    final_recommended.sort(key=lambda x: x[1], reverse=True)
+    
+    logger.info("-" * 50)
+    logger.info("[V4 추천 결과] 총 5개 밴드 (is_band=true)")
+    for i, (band_id, score, cluster_idx) in enumerate(final_recommended, 1):
+        logger.info(f"  {i}. band_id={band_id}, score={score:.4f} (클러스터 {cluster_idx})")
+    
+    # 8. 밴드 상세 정보 조회
+    recommended_band_ids = [band_id for band_id, _, _ in final_recommended]
+    bands_info = get_bands_with_keywords_by_ids(db, recommended_band_ids)
+    
+    # 9. 결과 조합
+    results = []
+    for band_id, score, cluster_idx in final_recommended:
+        band_info = bands_info.get(band_id, {})
+        results.append({
+            "band_id": band_id,
+            "score": score,
+            "band_name": band_info.get("band_name"),
+            "image_url": band_info.get("main_image"),
+            "band_music": band_info.get("main_music"),
+            "keywords": band_info.get("keywords", []),
+        })
+    
+    logger.info("=" * 70)
+    logger.info(f"[V4 최종 결과] {len(results)}개 밴드 반환")
+    logger.info(f"  - 각 클러스터 1등: 3개 (필수)")
+    logger.info(f"  - 각 클러스터 2등 중 상위: 2개 (추가)")
+    logger.info(f"  - is_band=true 필터링 적용")
+    logger.info("=" * 70)
+    
+    return results
