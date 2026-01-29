@@ -1,5 +1,5 @@
 # app/models/band.py
-from sqlalchemy import Column, Integer, String, Text, TIMESTAMP
+from sqlalchemy import Column, Integer, String, Text, TIMESTAMP, Boolean
 from sqlalchemy.orm import relationship
 
 from app.core.db import Base
@@ -16,6 +16,7 @@ class Band(Base):
     main_music = Column(String(200), nullable=True)
     description = Column(Text, nullable=False)
     spotify_id = Column(String(100), nullable=True)
+    is_band = Column(Boolean, nullable=True, default=True)
     created_at = Column(TIMESTAMP(timezone=True), nullable=True)
     updated_at = Column(TIMESTAMP(timezone=True), nullable=True)
     deleted_at = Column(TIMESTAMP(timezone=True), nullable=True)

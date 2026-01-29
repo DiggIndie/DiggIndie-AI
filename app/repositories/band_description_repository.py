@@ -45,6 +45,7 @@ def find_similar_bands_by_embedding(
     user_embedding: List[float],
     top_k: int = 3,
     exclude_band_ids: Set[int] | None = None,
+    only_bands: bool = False,
 ) -> List[Tuple[int, float]]:
     """
     pgvector를 활용하여 DB에서 코사인 유사도 계산 후 상위 k개 반환.
@@ -54,6 +55,7 @@ def find_similar_bands_by_embedding(
         user_embedding: 사용자 임베딩 벡터
         top_k: 반환할 밴드 수
         exclude_band_ids: 제외할 band_id 집합
+        only_bands: True일 경우 is_band=true인 밴드만 반환
     
     Returns:
         [(band_id, score), ...] 형태의 리스트 (유사도 높은 순)
@@ -63,11 +65,14 @@ def find_similar_bands_by_embedding(
     # pgvector의 <=> 연산자는 코사인 거리를 반환 (0~2 범위)
     # 코사인 유사도 = 1 - 코사인 거리
     query = text("""
-        SELECT band_id, 1 - (embedding <=> :vec) AS score
-        FROM band_description
-        WHERE embedding IS NOT NULL
-          AND (:no_exclude OR band_id != ALL(:exclude_ids))
-        ORDER BY embedding <=> :vec
+        SELECT bd.band_id, 1 - (bd.embedding <=> :vec) AS score
+        FROM band_description bd
+        JOIN band b ON bd.band_id = b.band_id
+        WHERE bd.embedding IS NOT NULL
+          AND (:no_exclude OR bd.band_id != ALL(:exclude_ids))
+          AND (:no_filter_band OR b.is_band = true)
+          AND b.deleted_at IS NULL
+        ORDER BY bd.embedding <=> :vec
         LIMIT :k
     """)
     
@@ -82,6 +87,7 @@ def find_similar_bands_by_embedding(
             "k": top_k,
             "no_exclude": len(exclude_list) == 0,
             "exclude_ids": exclude_list,
+            "no_filter_band": not only_bands,
         }
     )
     
